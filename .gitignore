@@ -1,0 +1,19 @@
+# Python bytecode — auto-generated, never commit
+__pycache__/
+*.pyc
+*.pyo
+
+# Checkpoints — large binary files, regenerate by retraining
+checkpoints/
+
+# Training outputs
+logs/
+results.png
+
+# Data files — too large for git
+data/
+*.parquet
+*.csv
+
+# macOS junk
+.DS_Store

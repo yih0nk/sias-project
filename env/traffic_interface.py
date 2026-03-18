@@ -3,19 +3,20 @@ env/traffic_interface.py
 ========================
 Wraps the SUMO TraCI connection (Section 2.3).
 
-Responsibilities:
-    - Start / stop the SUMO process
-    - Advance the simulation one epoch at a time (900 × 1-second steps)
-    - Provide routing queries (k-shortest paths, travel times)
-    - Snapshot edge-level metrics after each epoch
-    - Detect teleported vehicles and reset them
+Vehicle lifecycle (SUMO mode)
+------------------------------
+Vehicles do NOT pre-exist in SUMO when idle.  Only when a vehicle is
+dispatched to a request does it enter SUMO — with its full route already
+set (depot→pickup→dropoff).  After dropoff, the vehicle is removed from
+SUMO and its stored edge is updated to the dropoff location.
 
-All other modules call methods here — nothing else imports traci directly.
+This avoids the lane-blocking problem that occurs when 40 vehicles all
+try to park at the same depot edge.
 
 Two modes
 ---------
 SUMO mode  : connects to a real SUMO process (requires SUMO installed)
-Mock mode  : returns fake metrics for unit testing without SUMO
+Mock mode  : returns fake metrics — used for RL training without SUMO
 """
 
 import os
@@ -30,7 +31,6 @@ if "SUMO_HOME" in os.environ:
 
 try:
     import traci
-    import traci.constants as tc
     TRACI_AVAILABLE = True
 except ImportError:
     TRACI_AVAILABLE = False
@@ -38,14 +38,11 @@ except ImportError:
 
 
 class EdgeMetrics:
-    """
-    Snapshot of traffic conditions on all edges after one epoch.
-    Fed into the next observation vector.
-    """
+    """Snapshot of traffic conditions after one epoch."""
     def __init__(self, travel_times: Dict[str, float],
                  occupancies: Dict[str, float]):
-        self.travel_times = travel_times    # edge_id → seconds
-        self.occupancies  = occupancies     # edge_id → [0, 1]
+        self.travel_times = travel_times
+        self.occupancies  = occupancies
         all_tt  = list(travel_times.values())
         all_occ = list(occupancies.values())
         self.mean_travel_time = float(np.mean(all_tt))  if all_tt  else 0.0
@@ -73,16 +70,23 @@ class TrafficInterface:
         self.mock      = mock or not TRACI_AVAILABLE
         self._started  = False
         self._edge_metrics: Optional[EdgeMetrics] = None
-        self._vehicle_routes: Dict[str, Tuple[str, str]] = {}
 
-        # Set after start() — the depot is where vehicles are spawned/reset
+        # Maps vid → (pickup_edge, dropoff_edge) for active SUMO trips
+        self._active_routes: Dict[str, Tuple[str, str]] = {}
+
+        # Maps vid → (vtype, current_edge) for ALL vehicles (idle or active)
+        # This is our Python-side record; SUMO only knows about active vehicles.
+        self._vehicle_registry: Dict[str, Tuple[str, str]] = {}
+
+        # Route ID counter — ensures unique SUMO route IDs
+        self._route_counter = 0
+
         from tools.zone_map import DEPOT_EDGE
         self.depot_edge = DEPOT_EDGE
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def start(self) -> None:
-        """Launch SUMO and open the TraCI connection."""
         if self.mock:
             self._started = True
             return
@@ -90,7 +94,7 @@ class TrafficInterface:
         binary = "sumo-gui" if self.use_gui else SUMO_BINARY
         sumo_path = os.path.join(os.environ.get("SUMO_HOME", ""), "bin", binary)
         if not os.path.exists(sumo_path):
-            sumo_path = binary   # fall back to PATH
+            sumo_path = binary
 
         cmd = [
             sumo_path,
@@ -104,10 +108,9 @@ class TrafficInterface:
         traci.start(cmd)
         self._started = True
 
-        # Verify depot edge exists in this network
-        edges = traci.edge.getIDList()
+        edges = [e for e in traci.edge.getIDList() if not e.startswith(":")]
         if self.depot_edge not in edges and edges:
-            self.depot_edge = [e for e in edges if not e.startswith(":")][0]
+            self.depot_edge = edges[0]
 
     def close(self) -> None:
         if TRACI_AVAILABLE and self._started and not self.mock:
@@ -116,19 +119,20 @@ class TrafficInterface:
 
     def reset(self) -> None:
         self.close()
-        self._edge_metrics = None
-        self._vehicle_routes.clear()
+        self._edge_metrics     = None
+        self._active_routes.clear()
+        self._vehicle_registry.clear()
+        self._route_counter    = 0
         self.start()
+
+    def warmup(self, target_vehicle_count: int = 0, max_steps: int = 500) -> None:
+        """No-op in the new design — vehicles enter SUMO only at dispatch time."""
+        pass   # kept for API compatibility; no pre-spawning needed
 
     # ── Simulation stepping ───────────────────────────────────────────────────
 
     def step_epoch(self, dispatch_callback) -> EdgeMetrics:
-        """
-        Advance SUMO by one full epoch (STEPS_PER_EPOCH seconds).
-
-        dispatch_callback(event, vid, step) is called each second so the
-        FleetManagers can react to teleports and stop events.
-        """
+        """Advance SUMO by one full epoch (STEPS_PER_EPOCH seconds)."""
         if self.mock:
             return self._mock_edge_metrics()
 
@@ -137,17 +141,14 @@ class TrafficInterface:
         for step in range(STEPS_PER_EPOCH):
             traci.simulationStep()
 
-            # Detect newly teleported vehicles
             for vid in traci.simulation.getStartingTeleportIDList():
                 if vid not in teleported_seen:
                     dispatch_callback(event="teleport", vid=vid, step=step)
                     teleported_seen.add(vid)
 
-            # Check stop arrival events
-            for vid in list(self._vehicle_routes.keys()):
+            for vid in list(self._active_routes.keys()):
                 self._check_stop_events(vid, dispatch_callback)
 
-            # General per-step callback
             dispatch_callback(event="step", vid=None, step=step)
 
         self._edge_metrics = self._snapshot_edges()
@@ -158,10 +159,6 @@ class TrafficInterface:
     def get_k_shortest_routes(
         self, from_edge: str, to_edge: str, k: int = K_SHORTEST_PATHS
     ) -> List[Dict]:
-        """
-        Return up to k routes between two edges.
-        Each route: {'edges': [str, ...], 'travel_time': float}
-        """
         if self.mock:
             return self._mock_routes(from_edge, to_edge, k)
         if from_edge == to_edge:
@@ -173,11 +170,10 @@ class TrafficInterface:
                 return []
             routes.append({"edges": list(stage.edges),
                             "travel_time": stage.travelTime})
-            # Approximate k-shortest by adding noise to edge weights
             for _ in range(k - 1):
                 noise = {}
                 for e in stage.edges:
-                    orig = traci.edge.getTraveltime(e)
+                    orig  = traci.edge.getTraveltime(e)
                     noisy = max(orig * (1 + 0.15 * np.random.randn()), 0.1)
                     traci.edge.adaptTraveltime(e, noisy)
                     noise[e] = orig
@@ -192,7 +188,6 @@ class TrafficInterface:
         return routes
 
     def get_travel_time_between(self, from_edge: str, to_edge: str) -> float:
-        """Current estimated travel time (seconds) between two edges."""
         if self.mock:
             return float(np.random.uniform(60, 600))
         try:
@@ -202,7 +197,6 @@ class TrafficInterface:
             return float("inf")
 
     def get_edge_travel_times(self) -> Dict[str, float]:
-        """Current travel time (seconds) per edge."""
         if self.mock:
             return {}
         return {e: traci.edge.getTraveltime(e)
@@ -211,35 +205,91 @@ class TrafficInterface:
 
     # ── Vehicle commands ──────────────────────────────────────────────────────
 
+    def register_vehicle(self, vid: str, vtype: str, edge: str) -> None:
+        """
+        Register a vehicle in our Python registry (no SUMO insertion).
+
+        Vehicles only enter SUMO when dispatched via route_vehicle_to_pickup().
+        This replaces the old add_vehicle() approach.
+        """
+        self._vehicle_registry[vid] = (vtype, edge)
+
     def add_vehicle(self, vid: str, vtype: str, edge: str) -> None:
-        """Spawn a vehicle at a given edge."""
-        if self.mock:
-            return
-        try:
-            route_id = f"route_{vid}"
-            traci.route.add(route_id, [edge])
-            traci.vehicle.add(vid, routeID=route_id, typeID=vtype,
-                              departLane="best", departSpeed="0")
-        except Exception as e:
-            print(f"[TrafficInterface] add_vehicle({vid}) error: {e}")
+        """Alias for register_vehicle() — kept for backwards compatibility."""
+        self.register_vehicle(vid, vtype, edge)
 
     def route_vehicle_to_pickup(
         self, vid: str, pickup_edge: str, passenger_route: List[str]
     ) -> None:
         """
-        Tell SUMO vehicle `vid` to go to pickup_edge (stop there 1s),
-        then follow passenger_route to the dropoff.
+        Dispatch a vehicle by inserting it into SUMO with its full route.
+
+        Full route = current_edge → pickup_edge → dropoff_edge.
+        The vehicle is inserted fresh each trip (not pre-existing in SUMO).
+        """
+        if self.mock:
+            return
+
+        if vid not in self._vehicle_registry:
+            print(f"[TrafficInterface] {vid} not registered — call register_vehicle() first")
+            return
+
+        vtype, current_edge = self._vehicle_registry[vid]
+
+        try:
+            # Build full route: current_edge → pickup_edge (→ dropoff via passenger_route)
+            if current_edge == pickup_edge:
+                full_route = passenger_route
+            else:
+                to_pickup = traci.simulation.findRoute(current_edge, pickup_edge)
+                if not to_pickup.edges:
+                    print(f"[TrafficInterface] No route from {current_edge} to {pickup_edge} for {vid}")
+                    return
+                # passenger_route goes pickup→dropoff; avoid duplicating pickup_edge
+                suffix = (passenger_route[1:]
+                          if passenger_route and passenger_route[0] == pickup_edge
+                          else passenger_route)
+                full_route = list(to_pickup.edges) + suffix
+
+            if len(full_route) < 1:
+                return
+
+            # Remove old SUMO vehicle if it somehow still exists
+            if vid in traci.vehicle.getIDList():
+                traci.vehicle.remove(vid)
+
+            # Insert vehicle with a unique route ID
+            self._route_counter += 1
+            route_id = f"rt_{self._route_counter}"
+            traci.route.add(route_id, full_route)
+            traci.vehicle.add(vid, routeID=route_id, typeID=vtype,
+                              departLane="best", departSpeed="max")
+
+            # Stop at pickup edge to simulate boarding
+            traci.vehicle.setStop(vid, pickup_edge, duration=2)
+
+            self._active_routes[vid] = (pickup_edge, full_route[-1])
+
+        except Exception as e:
+            print(f"[TrafficInterface] route_vehicle_to_pickup({vid}) error: {e}")
+
+    def release_vehicle(self, vid: str, new_edge: str) -> None:
+        """
+        Remove a vehicle from SUMO after dropoff and update its registry edge.
+        The vehicle returns to 'virtual idle' — no SUMO presence until next dispatch.
         """
         if self.mock:
             return
         try:
-            full_route = passenger_route
-            traci.vehicle.setRoute(vid, full_route)
-            traci.vehicle.setStop(vid, pickup_edge, duration=1)
-            dropoff_edge = passenger_route[-1]
-            self._vehicle_routes[vid] = (pickup_edge, dropoff_edge)
-        except Exception as e:
-            print(f"[TrafficInterface] route_vehicle_to_pickup({vid}) error: {e}")
+            if vid in traci.vehicle.getIDList():
+                traci.vehicle.remove(vid)
+        except Exception:
+            pass
+        if vid in self._active_routes:
+            del self._active_routes[vid]
+        if vid in self._vehicle_registry:
+            vtype, _ = self._vehicle_registry[vid]
+            self._vehicle_registry[vid] = (vtype, new_edge)
 
     # ── Edge metrics ──────────────────────────────────────────────────────────
 
@@ -259,15 +309,24 @@ class TrafficInterface:
         return EdgeMetrics(travel_times, occupancies)
 
     def _check_stop_events(self, vid: str, callback) -> None:
-        if vid not in self._vehicle_routes:
+        if vid not in self._active_routes:
             return
         try:
-            pickup_edge, dropoff_edge = self._vehicle_routes[vid]
+            active_ids = traci.vehicle.getIDList()
+
+            if vid not in active_ids:
+                # Vehicle finished its route and was removed by SUMO ("arrived").
+                # This is the normal trip completion signal.
+                callback(event="dropoff", vid=vid, step=None)
+                return
+
+            # Also catch the case where vehicle is on dropoff edge with no stops left
+            pickup_edge, dropoff_edge = self._active_routes[vid]
             current = traci.vehicle.getRoadID(vid)
             stops   = traci.vehicle.getStops(vid)
             if not stops and current == dropoff_edge:
                 callback(event="dropoff", vid=vid, step=None)
-                del self._vehicle_routes[vid]
+
         except Exception:
             pass
 

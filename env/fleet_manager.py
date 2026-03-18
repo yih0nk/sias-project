@@ -116,6 +116,13 @@ class FleetManager:
                 best_vehicle.vid, request.pickup_edge, route
             )
 
+            # Estimate fare using request travel time and zone price multiplier
+            from config import BASE_FARE, PER_MIN_RATE
+            tt_min = request.travel_time_est / 60.0
+            mult   = price_multipliers[0] if best_vehicle.vtype == "hv" \
+                     else price_multipliers[1]
+            best_vehicle.planned_fare = (BASE_FARE + PER_MIN_RATE * tt_min) * mult
+
             # Update vehicle state
             best_vehicle.assign(request.request_id, request.pickup_edge)
             request.assigned_vid = best_vehicle.vid
@@ -159,12 +166,20 @@ class FleetManager:
 
     def on_dropoff_reached(self, vid: str, dropoff_edge: str,
                            fare: float) -> None:
-        """Called by TrafficInterface when a vehicle completes a trip."""
+        """
+        Called by TrafficInterface when a vehicle completes a trip.
+
+        Accepts TO_PICKUP or OCCUPIED state — in SUMO mode we don't fire
+        a separate pickup event, so the vehicle may still be in TO_PICKUP
+        when it arrives at the dropoff.
+        """
         vehicle = self._get_vehicle(vid)
-        if vehicle and vehicle.state == STATE_OCCUPIED:
-            vehicle.dropoff(dropoff_edge)
-            self.n_completed   += 1
-            self.total_revenue += fare
+        if vehicle and vehicle.state in (STATE_TO_PICKUP, STATE_OCCUPIED):
+            vehicle.state        = STATE_IDLE
+            vehicle.request_id   = None
+            vehicle.current_edge = dropoff_edge
+            self.n_completed    += 1
+            self.total_revenue  += fare
 
     def on_vehicle_teleported(self, vid: str, depot_edge: str) -> None:
         """

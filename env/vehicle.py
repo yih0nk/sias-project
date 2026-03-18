@@ -39,6 +39,7 @@ class Vehicle:
         self.state        = STATE_IDLE
         self.current_edge = start_edge
         self.request_id   = None
+        self.planned_fare = 0.0   # fare estimated at dispatch time, used at dropoff
 
     # ── State transitions ─────────────────────────────────────────────────────
 

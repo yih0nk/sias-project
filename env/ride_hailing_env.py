@@ -104,11 +104,15 @@ class RideHailingEnv:
             fm.reset()
         self.traffic.reset()
 
-        # Spawn all vehicles in SUMO at the depot
-        for c in range(N_COMPANIES):
-            for v in self.vehicles[c]:
-                v.current_edge = self.traffic.depot_edge
-                self.traffic.add_vehicle(v.vid, v.vtype, v.current_edge)
+        # Register vehicles at random starting positions spread across all zones.
+        # Vehicles are NOT inserted into SUMO yet — they enter on-demand when
+        # dispatched. This avoids lane-blocking from all vehicles sharing one edge.
+        from tools.zone_map import ZONE_REP_EDGE
+        zone_edges = list(ZONE_REP_EDGE.values())
+        all_vehicles = [v for fleet in self.vehicles for v in fleet]
+        for i, v in enumerate(all_vehicles):
+            v.current_edge = zone_edges[i % len(zone_edges)]
+            self.traffic.register_vehicle(v.vid, v.vtype, v.current_edge)
 
         return self._build_observations(0, np.zeros(N_ZONES), np.zeros(N_ZONES))
 
@@ -188,8 +192,10 @@ class RideHailingEnv:
                 for fm in self.fleet_managers:
                     v = fm._get_vehicle(vid)
                     if v:
-                        fm.on_dropoff_reached(vid, self.traffic.depot_edge,
-                                              fare=5.0)
+                        dropoff_edge = v.current_edge   # updated by vehicle state
+                        fm.on_dropoff_reached(vid, dropoff_edge, fare=v.planned_fare)
+                        # Remove from SUMO; vehicle is now virtually idle again
+                        self.traffic.release_vehicle(vid, dropoff_edge)
 
         edge_metrics = self.traffic.step_epoch(dispatch_cb)
 

@@ -81,6 +81,9 @@ class TrafficInterface:
         # Route ID counter — ensures unique SUMO route IDs
         self._route_counter = 0
 
+        # Tracks vehicles whose pickup stop has already been reported
+        self._pickup_notified: set = set()
+
         from tools.zone_map import DEPOT_EDGE
         self.depot_edge = DEPOT_EDGE
 
@@ -123,6 +126,7 @@ class TrafficInterface:
         self._active_routes.clear()
         self._vehicle_registry.clear()
         self._route_counter    = 0
+        self._pickup_notified.clear()
         self.start()
 
     def warmup(self, target_vehicle_count: int = 0, max_steps: int = 500) -> None:
@@ -287,6 +291,7 @@ class TrafficInterface:
             pass
         if vid in self._active_routes:
             del self._active_routes[vid]
+        self._pickup_notified.discard(vid)
         if vid in self._vehicle_registry:
             vtype, _ = self._vehicle_registry[vid]
             self._vehicle_registry[vid] = (vtype, new_edge)
@@ -320,12 +325,20 @@ class TrafficInterface:
                 callback(event="dropoff", vid=vid, step=None)
                 return
 
-            # Also catch the case where vehicle is on dropoff edge with no stops left
+            # Check stop transitions for pickup and dropoff
             pickup_edge, dropoff_edge = self._active_routes[vid]
             current = traci.vehicle.getRoadID(vid)
             stops   = traci.vehicle.getStops(vid)
-            if not stops and current == dropoff_edge:
-                callback(event="dropoff", vid=vid, step=None)
+
+            if not stops:
+                # Pickup stop has been served — fire once per trip
+                if vid not in self._pickup_notified:
+                    self._pickup_notified.add(vid)
+                    callback(event="pickup", vid=vid, step=None)
+
+                # Vehicle has reached dropoff edge with no remaining stops
+                if current == dropoff_edge:
+                    callback(event="dropoff", vid=vid, step=None)
 
         except Exception:
             pass

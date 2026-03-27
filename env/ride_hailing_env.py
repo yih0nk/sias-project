@@ -188,11 +188,17 @@ class RideHailingEnv:
             if event == "teleport" and vid:
                 for fm in self.fleet_managers:
                     fm.on_vehicle_teleported(vid, self.traffic.depot_edge)
+            elif event == "pickup" and vid:
+                for fm in self.fleet_managers:
+                    fm.on_pickup_reached(vid)
             elif event == "dropoff" and vid:
                 for fm in self.fleet_managers:
                     v = fm._get_vehicle(vid)
                     if v:
-                        dropoff_edge = v.current_edge   # updated by vehicle state
+                        # Use the route record for the authoritative dropoff edge;
+                        # v.current_edge is stale until after on_dropoff_reached updates it.
+                        route_info = self.traffic._active_routes.get(vid)
+                        dropoff_edge = route_info[1] if route_info else v.current_edge
                         fm.on_dropoff_reached(vid, dropoff_edge, fare=v.planned_fare)
                         # Remove from SUMO; vehicle is now virtually idle again
                         self.traffic.release_vehicle(vid, dropoff_edge)

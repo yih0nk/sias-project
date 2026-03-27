@@ -12,6 +12,7 @@ Full options:
 """
 
 import os
+import json
 import argparse
 import numpy as np
 import torch
@@ -148,6 +149,19 @@ def train(args):
     # Save final checkpoints
     for c, agent in enumerate(agents):
         agent.save(os.path.join(args.checkpoint, f"{COMPANY_NAMES[c]}_final.pt"))
+
+    # Save training config so evaluate.py can reconstruct the same env
+    config_path = os.path.join(args.checkpoint, "training_config.json")
+    training_cfg = {
+        "reward_mode": args.reward_mode,
+        "use_sumo":    args.use_sumo,
+        "trips":       args.trips,
+        "zone_edges":  getattr(args, "zone_edges", None),
+        "seed":        args.seed,
+    }
+    with open(config_path, "w") as f:
+        json.dump(training_cfg, f, indent=2)
+    print(f"[train] Training config saved → {config_path}")
 
     print("\nTraining complete.")
     env.traffic.close()

@@ -17,6 +17,7 @@ Usage:
 """
 
 import os
+import json
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
@@ -26,7 +27,7 @@ from config import (
     N_ZONES, N_COMPANIES, COMPANY_NAMES, PLANNING_HORIZON,
     SEED, CHECKPOINT_DIR,
 )
-from data_loader import make_mock_demand
+from data_loader import make_mock_demand, load_demand
 from env.ride_hailing_env import RideHailingEnv
 from env.traffic_interface import TrafficInterface
 from agents.ppo_agent import PPOAgent
@@ -34,15 +35,43 @@ from agents.ppo_agent import PPOAgent
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--ckpt-a",    type=str, default=None,
+    p.add_argument("--ckpt-a",       type=str, default=None,
                    help="Checkpoint for CompanyA (optional)")
-    p.add_argument("--ckpt-b",    type=str, default=None,
+    p.add_argument("--ckpt-b",       type=str, default=None,
                    help="Checkpoint for CompanyB (optional)")
-    p.add_argument("--episodes",  type=int, default=1)
-    p.add_argument("--seed",      type=int, default=SEED)
-    p.add_argument("--save-fig",  type=str, default="results.png",
+    p.add_argument("--episodes",     type=int, default=1)
+    p.add_argument("--seed",         type=int, default=None,
+                   help="Random seed (defaults to training seed if available)")
+    p.add_argument("--save-fig",     type=str, default="results.png",
                    help="Save figure to this path")
+    # Env settings — auto-loaded from training_config.json when available;
+    # explicit flags here always take precedence.
+    p.add_argument("--reward-mode",  type=str, default=None,
+                   choices=["revenue", "decomposed"],
+                   help="Override reward mode (default: match training config)")
+    p.add_argument("--use-sumo",     action="store_true", default=None,
+                   help="Force real SUMO (default: match training config)")
+    p.add_argument("--trips",        type=str, default=None,
+                   help="Path to demand Parquet (default: match training config)")
+    p.add_argument("--zone-edges",   type=str, default=None)
     return p.parse_args()
+
+
+def _load_training_config(ckpt_a, ckpt_b):
+    """
+    Look for training_config.json in the same directory as either checkpoint.
+    Returns a dict of training settings, or {} if not found.
+    """
+    for ckpt in (ckpt_a, ckpt_b):
+        if ckpt:
+            cfg_path = os.path.join(os.path.dirname(os.path.abspath(ckpt)),
+                                    "training_config.json")
+            if os.path.exists(cfg_path):
+                with open(cfg_path) as f:
+                    cfg = json.load(f)
+                print(f"[evaluate] Loaded training config from {cfg_path}")
+                return cfg
+    return {}
 
 
 def run_episode(env, agents, deterministic=True):
@@ -172,19 +201,39 @@ def plot_decisions(history, save_path="results.png"):
 def main():
     args = parse_args()
 
-    demand_data = make_mock_demand(
-        n_epochs=PLANNING_HORIZON,
-        trips_per_epoch=20.0,
-        rng=np.random.default_rng(args.seed),
-    )
+    # ── Resolve env settings: training config < CLI overrides ─────────────────
+    train_cfg = _load_training_config(args.ckpt_a, args.ckpt_b)
+
+    reward_mode = args.reward_mode or train_cfg.get("reward_mode", "revenue")
+    use_sumo    = args.use_sumo    or train_cfg.get("use_sumo",    False)
+    trips       = args.trips       or train_cfg.get("trips",       None)
+    zone_edges  = args.zone_edges  or train_cfg.get("zone_edges",  None)
+    seed        = args.seed        if args.seed is not None \
+                                   else train_cfg.get("seed", SEED)
+
+    print(f"[evaluate] reward_mode={reward_mode}  use_sumo={use_sumo}  "
+          f"trips={'<mock>' if trips is None else trips}")
+
+    # ── Demand data ───────────────────────────────────────────────────────────
+    if trips:
+        demand_data = load_demand(trips, zone_edges)
+    else:
+        demand_data = make_mock_demand(
+            n_epochs=PLANNING_HORIZON,
+            trips_per_epoch=20.0,
+            rng=np.random.default_rng(seed),
+        )
+
+    # ── Environment ───────────────────────────────────────────────────────────
     env = RideHailingEnv(
         demand_data=demand_data,
-        traffic=TrafficInterface(mock=True, seed=args.seed),
-        reward_mode="revenue",
-        seed=args.seed,
+        traffic=TrafficInterface(mock=not use_sumo, seed=seed),
+        reward_mode=reward_mode,
+        seed=seed,
     )
 
     agents = [PPOAgent(company_id=c) for c in range(N_COMPANIES)]
+    np.random.seed(seed)
 
     # Load checkpoints if provided
     ckpts = [args.ckpt_a, args.ckpt_b]

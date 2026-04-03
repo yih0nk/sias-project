@@ -27,11 +27,11 @@ from typing import Dict, List, Optional, Tuple
 from config import (
     N_ZONES, N_COMPANIES, COMPANY_NAMES, VEHICLE_TYPES,
     N_HV_PER_COMPANY, N_AV_PER_COMPANY,
-    M_MIN, M_MAX, THETA_AV_MIN, THETA_AV_MAX,
+    M_MIN, M_MAX,
     ACTION_DIM, OBS_DIM,
     EPOCH_SEC, PLANNING_HORIZON,
     DROP_PENALTY, PEND_PENALTY,
-    W_PRICE, W_SERVICE, W_CONG,
+    W_PRICE, W_SERVICE,
     SEED,
 )
 from env.vehicle import Vehicle
@@ -87,9 +87,8 @@ class RideHailingEnv:
 
         self.epoch         = 0
         self.done          = False
-        # Store last decoded actions for the competitor observation
+        # Store last decoded prices for the competitor observation
         self._last_prices  = np.ones((N_COMPANIES, N_ZONES))   # price per zone
-        self._last_thetas  = np.ones(N_COMPANIES) * 5.0        # theta_av
 
     # ── Gym API ───────────────────────────────────────────────────────────────
 
@@ -98,7 +97,6 @@ class RideHailingEnv:
         self.epoch = 0
         self.done  = False
         self._last_prices[:] = 1.0   # neutral starting price
-        self._last_thetas[:] = 5.0   # mid-range theta
 
         for fm in self.fleet_managers:
             fm.reset()
@@ -138,13 +136,10 @@ class RideHailingEnv:
 
         # ── 1. Decode actions ─────────────────────────────────────────────────
         prices  = []   # prices[c] = array shape (N_ZONES,)
-        thetas  = []   # thetas[c] = float
         for c in range(N_COMPANIES):
-            p, th = self._decode_action(actions[c])
+            p = self._decode_action(actions[c])
             prices.append(p)
-            thetas.append(th)
             self._last_prices[c] = p
-            self._last_thetas[c] = th
 
         # ── 2. Get demand for this epoch ──────────────────────────────────────
         edge_tt  = self.traffic.get_edge_travel_times()
@@ -181,7 +176,6 @@ class RideHailingEnv:
         for c, fm in enumerate(self.fleet_managers):
             fm.dispatch_epoch(
                 price_multipliers=np.array([prices[c].mean(), prices[c].mean()]),
-                theta_av=thetas[c],
             )
 
         def dispatch_cb(event, vid, step):
@@ -207,8 +201,7 @@ class RideHailingEnv:
 
         # ── 6. Compute rewards ────────────────────────────────────────────────
         rewards = [
-            self._compute_reward(c, self.fleet_managers[c],
-                                 prices[c], thetas[c], edge_metrics)
+            self._compute_reward(c, self.fleet_managers[c], prices[c])
             for c in range(N_COMPANIES)
         ]
 
@@ -225,7 +218,6 @@ class RideHailingEnv:
             "pending":    [len(fm._pending) for fm in self.fleet_managers],
             "revenue":    [fm.total_revenue for fm in self.fleet_managers],
             "prices":     [prices[c].tolist()  for c in range(N_COMPANIES)],
-            "thetas":     thetas,
         }
         return obs, rewards, self.done, info
 
@@ -245,28 +237,18 @@ class RideHailingEnv:
             math.cos(2 * math.pi * t_frac),
         ], dtype=np.float32)
 
-        # Network congestion
-        if self.traffic.edge_metrics:
-            em   = self.traffic.edge_metrics
-            cong = np.array([em.mean_travel_time / 300.0,
-                             em.mean_occupancy], dtype=np.float32)
-        else:
-            cong = np.zeros(2, dtype=np.float32)
-
         demand_feat = np.array([demand_total / 100.0], dtype=np.float32)
 
         obs_list = []
         for c in range(N_COMPANIES):
-            comp = 1 - c   # the other company
+            comp  = 1 - c   # the other company
             fleet = self.fleet_managers[c].get_fleet_state()
             comp_feat = np.array([
                 self._last_prices[comp].mean(),   # competitor mean price
-                self._last_thetas[comp] / THETA_AV_MAX,  # competitor theta (normed)
             ], dtype=np.float32)
 
             obs = np.concatenate([
                 tod,
-                cong,
                 demand_feat,
                 zone_outflow.astype(np.float32),
                 zone_inflow.astype(np.float32),
@@ -283,11 +265,9 @@ class RideHailingEnv:
 
     def _compute_reward(
         self,
-        company:     int,
-        fm:          FleetManager,
-        prices:      np.ndarray,
-        theta:       float,
-        edge_metrics,
+        company: int,
+        fm:      FleetManager,
+        prices:  np.ndarray,
     ) -> float:
         n_drop   = fm.n_dropped
         n_pend   = len(fm._pending)
@@ -306,27 +286,17 @@ class RideHailingEnv:
             mean_mult    = float(prices.mean())
             market_share = n_comp / max(total, 1)
             serve_frac   = n_comp / max(n_comp + n_drop, 1)
-            mean_occ     = edge_metrics.mean_occupancy if edge_metrics else 0.0
             reward = (W_PRICE   * mean_mult * market_share
-                    + W_SERVICE * serve_frac
-                    - W_CONG    * mean_occ)
+                    + W_SERVICE * serve_frac)
 
         return float(reward)
 
     # ── Action decoding ───────────────────────────────────────────────────────
 
-    def _decode_action(
-        self, raw: np.ndarray
-    ) -> Tuple[np.ndarray, float]:
+    def _decode_action(self, raw: np.ndarray) -> np.ndarray:
         """
-        Map tanh output [-1, 1] → real action ranges.
-
-        raw[:N_ZONES]  → zone prices  in [M_MIN, M_MAX]
-        raw[-1]        → theta_av     in [THETA_AV_MIN, THETA_AV_MAX]
+        Map tanh output [-1, 1] → zone price multipliers in [M_MIN, M_MAX].
         """
         raw = np.clip(raw, -1.0, 1.0)
         t   = (raw + 1.0) / 2.0   # shift to [0, 1]
-
-        prices   = M_MIN + t[:N_ZONES] * (M_MAX - M_MIN)
-        theta_av = THETA_AV_MIN + t[-1] * (THETA_AV_MAX - THETA_AV_MIN)
-        return prices, float(theta_av)
+        return M_MIN + t * (M_MAX - M_MIN)

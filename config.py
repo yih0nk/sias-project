@@ -4,30 +4,26 @@ config.py
 Single source of truth for every hyperparameter in the simulation.
 All other modules import from here — never hard-code magic numbers.
 
-Simplified setup (mentor feedback)
------------------------------------
-- N_ZONES = 9  (3×3 grid, manageable for experiments)
-- Single price multiplier per zone (not separate HV/AV)
-- ACTION_DIM = N_ZONES + 1  (zone prices + theta_av)
-- Simple synthetic SUMO grid network (no real Manhattan required)
-- Random demand generation (no real TLC data required)
+Parameters match Section 1 / Table 1 of the paper.
+N_ZONES=75 uses mock representative edges; real mode requires
+the Manhattan SUMO network and TLC zone→edge mapping.
 """
 
 # ── Simulation structure ──────────────────────────────────────────────────────
-N_ZONES          = 9           # 3×3 zone grid (simple network)
+N_ZONES          = 75          # 75 TLC taxi zones in Manhattan (Table 1)
 N_COMPANIES      = 2           # CompanyA (0), CompanyB (1)
 COMPANY_NAMES    = ["CompanyA", "CompanyB"]
 VEHICLE_TYPES    = ["hv", "av"]   # human-driven, autonomous
 
-# Vehicles per (company, type) — reduced for simple network
-N_HV_PER_COMPANY = 10
-N_AV_PER_COMPANY = 10
+# Vehicles per (company, type) — Table 1
+N_HV_PER_COMPANY = 200
+N_AV_PER_COMPANY = 200
 
 # Time
 EPOCH_SEC        = 900         # 15 min = 900 seconds per decision epoch
 SUMO_STEP_SEC    = 1           # SUMO advances 1 second per step
 STEPS_PER_EPOCH  = EPOCH_SEC // SUMO_STEP_SEC   # 900 steps/epoch
-PLANNING_HORIZON = 96          # 1 simulated day (96 × 15min epochs)
+PLANNING_HORIZON = 2976        # 31 days × 96 epochs/day (Table 1)
 
 # ── Vehicle state IDs ─────────────────────────────────────────────────────────
 STATE_IDLE       = 0
@@ -41,24 +37,20 @@ MAX_WAIT_SEC     = 900         # request dropped after 15 min without service
 # ── Action space ──────────────────────────────────────────────────────────────
 # Each company controls:
 #   zone_price[z]  : one price multiplier per zone (applies to all vehicle types)
-#   theta_av       : AV routing logit dispersion
 M_MIN            = 0.5         # minimum price multiplier
 M_MAX            = 2.0         # maximum price multiplier
-THETA_AV_MIN     = 0.1         # near-random AV routing
-THETA_AV_MAX     = 10.0        # near-greedy AV routing
 
-# Action dimension per company: N_ZONES prices + 1 theta_av
-ACTION_DIM       = N_ZONES + 1   # 10
+# Action dimension per company: N_ZONES prices only
+ACTION_DIM       = N_ZONES     # 9
 
 # ── Observation space ─────────────────────────────────────────────────────────
 # time-of-day sin/cos                    : 2
-# network congestion (mean_tt, n_edges)  : 2
 # total demand + zone inflow + outflow   : 1 + 2*N_ZONES = 19
 # own fleet state (idle/pickup/occ/total): 4
-# competitor last price (mean) + theta   : 2
+# competitor last price (mean)           : 1
 # ─────────────────────────────────────────
-# Total = 11 + 2*N_ZONES = 29
-OBS_DIM          = 11 + 2 * N_ZONES   # 29
+# Total = 8 + 2*N_ZONES = 26
+OBS_DIM          = 8 + 2 * N_ZONES    # 26
 
 # ── Reward (Eq. 1 — revenue-based) ───────────────────────────────────────────
 DROP_PENALTY     = 0.2         # per dropped request
@@ -67,7 +59,6 @@ PEND_PENALTY     = 0.1         # per request still waiting in queue
 # ── Reward (Eq. 2 — decomposed alternative) ──────────────────────────────────
 W_PRICE          = 1.0
 W_SERVICE        = 0.5
-W_CONG           = 0.3
 
 # ── Customer logit model ──────────────────────────────────────────────────────
 BETA_PRICE       = 1.0

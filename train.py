@@ -135,9 +135,6 @@ def train(args):
         print(f"  Last prices (mean): "
               f"{COMPANY_NAMES[0]}={np.mean(info['prices'][0]):.3f}  "
               f"{COMPANY_NAMES[1]}={np.mean(info['prices'][1]):.3f}")
-        print(f"  Last theta_av: "
-              f"{COMPANY_NAMES[0]}={info['thetas'][0]:.2f}  "
-              f"{COMPANY_NAMES[1]}={info['thetas'][1]:.2f}")
 
         # Save checkpoints
         if episode % args.save_every == 0:

@@ -65,8 +65,7 @@ class FleetManager:
         """Add a newly assigned request to the pending queue."""
         self._pending[request.request_id] = (request, 0.0)
 
-    def dispatch_epoch(self, price_multipliers: np.ndarray,
-                       theta_av: float) -> Dict[str, int]:
+    def dispatch_epoch(self, price_multipliers: np.ndarray) -> Dict[str, int]:
         """
         Core dispatch loop called once per epoch (Section 2.1.1).
 
@@ -74,8 +73,6 @@ class FleetManager:
         ----------
         price_multipliers : np.ndarray shape (2,)
             [hv_mult, av_mult] for this company's current action.
-        theta_av : float
-            AV routing logit dispersion (action component θ_av).
 
         Returns
         -------
@@ -105,8 +102,6 @@ class FleetManager:
             route = self._compute_passenger_route(
                 request.pickup_edge,
                 request.dropoff_edge,
-                best_vehicle.vtype,
-                theta_av,
             )
             if route is None:
                 continue   # no route found (disconnected graph)
@@ -262,43 +257,22 @@ class FleetManager:
 
     def _compute_passenger_route(
         self,
-        pickup_edge: str,
+        pickup_edge:  str,
         dropoff_edge: str,
-        vtype: str,
-        theta_av: float,
     ) -> Optional[List[str]]:
         """
-        Compute the route a vehicle takes while carrying a passenger.
-
-        HV: always takes the single shortest path.
-        AV: samples from k-shortest paths using logit probabilities (Eq. 7).
+        Compute the shortest route for a vehicle carrying a passenger.
 
         Returns
         -------
         list of SUMO edge IDs, or None if no route found.
         """
         routes = self.traffic.get_k_shortest_routes(
-            pickup_edge, dropoff_edge, k=K_SHORTEST_PATHS
+            pickup_edge, dropoff_edge, k=1
         )
         if not routes:
             return None
-
-        if vtype == "hv" or len(routes) == 1:
-            # Deterministic: always pick the shortest (first) route
-            return routes[0]["edges"]
-
-        # AV logit sampling (Eq. 7)
-        travel_times = np.array([r["travel_time"] for r in routes],
-                                dtype=np.float64)
-        tt_min = travel_times.min()
-
-        # P(route_i) = exp(-θ_av * (tt_i - tt_min)) / Σ exp(...)
-        log_probs = -theta_av * (travel_times - tt_min)
-        probs     = np.exp(log_probs - log_probs.max())
-        probs    /= probs.sum()
-
-        chosen_idx = self.rng.choice(len(routes), p=probs)
-        return routes[chosen_idx]["edges"]
+        return routes[0]["edges"]
 
     def _age_and_drop_pending(self) -> None:
         """

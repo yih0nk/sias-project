@@ -72,16 +72,14 @@ def make_mock_demand(
 
         for _ in range(n_trips):
             pu_zone = int(rng.integers(0, N_ZONES))
-            # Dropoff zone: biased toward adjacent zones (not pure random)
             do_zone = int(rng.integers(0, N_ZONES))
 
             pu_edge = ZONE_REP_EDGE[pu_zone]
             do_edge = ZONE_REP_EDGE[do_zone]
 
-            # Travel time estimate: proportional to zone distance
-            zone_dist = abs(pu_zone // 3 - do_zone // 3) + \
-                        abs(pu_zone  % 3 - do_zone  % 3)
-            tt_ff = max(60.0, float(rng.normal(120 * (zone_dist + 1), 30)))
+            # Travel time estimate: proportional to zone index distance (mock)
+            zone_dist = abs(pu_zone - do_zone)
+            tt_ff = max(60.0, float(rng.normal(120 * (zone_dist / N_ZONES * 5 + 1), 30)))
 
             demand_data.append({
                 "epoch":          epoch,

@@ -45,7 +45,8 @@ class FixedPriceAgent:
         # Invert _decode_action:  raw = 2*t - 1,  t = (val - min) / (max - min)
         t_price   = (fixed_price - M_MIN) / (M_MAX - M_MIN)
         raw_price = float(np.clip(2.0 * t_price - 1.0, -1.0, 1.0))
-        self._action = np.array([raw_price] * N_ZONES, dtype=np.float32)
+        # ACTION_DIM = 2*N_ZONES: N_ZONES HV prices + N_ZONES AV prices
+        self._action = np.array([raw_price] * (2 * N_ZONES), dtype=np.float32)
 
     def act(self, obs, deterministic=True):
         return self._action, 0.0, 0.0
@@ -139,7 +140,9 @@ def run_eval_episode(env, agents):
             totals["completed"][c] += info["completed"][c]
             totals["dropped"][c]   += info["dropped"][c]
             totals["requests"][c]  += (info["completed"][c] + info["dropped"][c])
-            totals["price_history"][c].append(np.mean(info["prices"][c]))
+            totals["price_history"][c].append(
+                (np.mean(info["prices_hv"][c]) + np.mean(info["prices_av"][c])) / 2.0
+            )
 
         if done:
             break

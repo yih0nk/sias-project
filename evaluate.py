@@ -89,7 +89,7 @@ def run_episode(env, agents, deterministic=True):
     """
     obs_list = env.reset()
     history  = {k: [] for k in
-                ["prices", "rewards", "completed", "dropped"]}
+                ["prices_hv", "prices_av", "rewards", "completed", "dropped"]}
 
     for _ in range(PLANNING_HORIZON):
         actions = [agents[c].act(obs_list[c], deterministic=deterministic)[0]
@@ -97,7 +97,8 @@ def run_episode(env, agents, deterministic=True):
 
         obs_list, rewards, done, info = env.step(actions)
 
-        history["prices"].append(info["prices"])
+        history["prices_hv"].append(info["prices_hv"])
+        history["prices_av"].append(info["prices_av"])
         history["rewards"].append(rewards)
         history["completed"].append(info["completed"])
         history["dropped"].append(info["dropped"])
@@ -115,8 +116,9 @@ def plot_decisions(history, save_path="results.png"):
     n_epochs = len(history["rewards"])
     epochs   = np.arange(n_epochs)
 
-    prices_A = np.array([h[0] for h in history["prices"]])   # (T, N_ZONES)
-    prices_B = np.array([h[1] for h in history["prices"]])
+    # Use HV prices for the pricing panel (representative)
+    prices_A = np.array([h[0] for h in history["prices_hv"]])   # (T, N_ZONES)
+    prices_B = np.array([h[1] for h in history["prices_hv"]])
     rewards  = np.array(history["rewards"])                  # (T, 2)
     completed= np.array(history["completed"])                # (T, 2)
 
@@ -242,7 +244,8 @@ def main():
         ]
 
     avg_history = {
-        "prices":    avg_field("prices"),
+        "prices_hv": avg_field("prices_hv"),
+        "prices_av": avg_field("prices_av"),
         "rewards":   avg_field("rewards"),
         "completed": avg_field("completed"),
         "dropped":   avg_field("dropped"),
@@ -255,10 +258,11 @@ def main():
     for c in range(N_COMPANIES):
         print(f"  {COMPANY_NAMES[c]}: total reward = {total_rewards[c]:.3f}")
 
-    mean_prices = [np.mean([h[c] for h in avg_history["prices"]]) for c in range(N_COMPANIES)]
-    print(f"\n  Mean price multiplier:")
+    mean_hv = [np.mean([h[c] for h in avg_history["prices_hv"]]) for c in range(N_COMPANIES)]
+    mean_av = [np.mean([h[c] for h in avg_history["prices_av"]]) for c in range(N_COMPANIES)]
+    print(f"\n  Mean price multiplier (HV / AV):")
     for c in range(N_COMPANIES):
-        print(f"    {COMPANY_NAMES[c]}: {mean_prices[c]:.3f}")
+        print(f"    {COMPANY_NAMES[c]}: {mean_hv[c]:.3f} / {mean_av[c]:.3f}")
 
     plot_decisions(avg_history, save_path=args.save_fig)
 

@@ -87,8 +87,8 @@ class RideHailingEnv:
 
         self.epoch         = 0
         self.done          = False
-        # Store last decoded prices for the competitor observation
-        self._last_prices  = np.ones((N_COMPANIES, N_ZONES))   # price per zone
+        # Last decoded prices: shape (N_COMPANIES, 2, N_ZONES)  — [c][0=hv/1=av][z]
+        self._last_prices  = np.ones((N_COMPANIES, 2, N_ZONES))
 
     # ── Gym API ───────────────────────────────────────────────────────────────
 
@@ -96,7 +96,7 @@ class RideHailingEnv:
         """Start a new episode. Returns initial observations [obs_A, obs_B]."""
         self.epoch = 0
         self.done  = False
-        self._last_prices[:] = 1.0   # neutral starting price
+        self._last_prices[:] = 1.0   # neutral HV and AV prices
 
         for fm in self.fleet_managers:
             fm.reset()
@@ -135,11 +135,13 @@ class RideHailingEnv:
         assert not self.done, "Episode finished — call reset() first."
 
         # ── 1. Decode actions ─────────────────────────────────────────────────
-        prices  = []   # prices[c] = array shape (N_ZONES,)
+        # prices[c] = (prices_hv, prices_av), each shape (N_ZONES,)
+        prices = []
         for c in range(N_COMPANIES):
-            p = self._decode_action(actions[c])
-            prices.append(p)
-            self._last_prices[c] = p
+            p_hv, p_av = self._decode_action(actions[c])
+            prices.append((p_hv, p_av))
+            self._last_prices[c, 0] = p_hv
+            self._last_prices[c, 1] = p_av
 
         # ── 2. Get demand for this epoch ──────────────────────────────────────
         edge_tt  = self.traffic.get_edge_travel_times()
@@ -149,10 +151,9 @@ class RideHailingEnv:
 
         # ── 3. Customer choice ────────────────────────────────────────────────
         for req in requests:
-            # Price multiplier matrix: shape (N_COMPANIES, 2)
-            # Both HV and AV in a company get the same zone price
+            # Price multiplier matrix: shape (N_COMPANIES, 2)  [c][0=hv, 1=av]
             mults = np.array([
-                [prices[c][req.pickup_zone], prices[c][req.pickup_zone]]
+                [prices[c][0][req.pickup_zone], prices[c][1][req.pickup_zone]]
                 for c in range(N_COMPANIES)
             ])
             # Approximate wait: proportional to pending queue length
@@ -175,7 +176,8 @@ class RideHailingEnv:
         # ── 5. Dispatch vehicles (mock or real SUMO) ──────────────────────────
         for c, fm in enumerate(self.fleet_managers):
             fm.dispatch_epoch(
-                price_multipliers=np.array([prices[c].mean(), prices[c].mean()]),
+                price_multipliers=np.array([prices[c][0].mean(),   # HV mean
+                                            prices[c][1].mean()]), # AV mean
             )
 
         def dispatch_cb(event, vid, step):
@@ -201,7 +203,8 @@ class RideHailingEnv:
 
         # ── 6. Compute rewards ────────────────────────────────────────────────
         rewards = [
-            self._compute_reward(c, self.fleet_managers[c], prices[c])
+            self._compute_reward(c, self.fleet_managers[c],
+                                 prices[c][0], prices[c][1])
             for c in range(N_COMPANIES)
         ]
 
@@ -217,7 +220,8 @@ class RideHailingEnv:
             "dropped":    [fm.n_dropped     for fm in self.fleet_managers],
             "pending":    [len(fm._pending) for fm in self.fleet_managers],
             "revenue":    [fm.total_revenue for fm in self.fleet_managers],
-            "prices":     [prices[c].tolist()  for c in range(N_COMPANIES)],
+            "prices_hv":  [prices[c][0].tolist() for c in range(N_COMPANIES)],
+            "prices_av":  [prices[c][1].tolist() for c in range(N_COMPANIES)],
         }
         return obs, rewards, self.done, info
 
@@ -243,8 +247,10 @@ class RideHailingEnv:
         for c in range(N_COMPANIES):
             comp  = 1 - c   # the other company
             fleet = self.fleet_managers[c].get_fleet_state()
+            # Competitor's last mean HV price and mean AV price (Section 3.1)
             comp_feat = np.array([
-                self._last_prices[comp].mean(),   # competitor mean price
+                self._last_prices[comp, 0].mean(),   # competitor HV mean price
+                self._last_prices[comp, 1].mean(),   # competitor AV mean price
             ], dtype=np.float32)
 
             obs = np.concatenate([
@@ -265,9 +271,10 @@ class RideHailingEnv:
 
     def _compute_reward(
         self,
-        company: int,
-        fm:      FleetManager,
-        prices:  np.ndarray,
+        company:   int,
+        fm:        FleetManager,
+        prices_hv: np.ndarray,
+        prices_av: np.ndarray,
     ) -> float:
         n_drop   = fm.n_dropped
         n_pend   = len(fm._pending)
@@ -282,8 +289,8 @@ class RideHailingEnv:
                       - DROP_PENALTY * n_drop
                       - PEND_PENALTY * n_pend) / denom
         else:
-            # Eq. 2
-            mean_mult    = float(prices.mean())
+            # Eq. 2 — mean_mult = avg over HV and AV prices (Eq. 3)
+            mean_mult    = float((prices_hv.mean() + prices_av.mean()) / 2.0)
             market_share = n_comp / max(total, 1)
             serve_frac   = n_comp / max(n_comp + n_drop, 1)
             reward = (W_PRICE   * mean_mult * market_share
@@ -293,10 +300,16 @@ class RideHailingEnv:
 
     # ── Action decoding ───────────────────────────────────────────────────────
 
-    def _decode_action(self, raw: np.ndarray) -> np.ndarray:
+    def _decode_action(
+        self, raw: np.ndarray
+    ) -> tuple:
         """
-        Map tanh output [-1, 1] → zone price multipliers in [M_MIN, M_MAX].
+        Map tanh output [-1, 1]^(2·N_ZONES) → (prices_hv, prices_av).
+
+        raw[:N_ZONES]  → zone_price_hv  in [M_MIN, M_MAX]  (Table 2)
+        raw[N_ZONES:]  → zone_price_av  in [M_MIN, M_MAX]  (Table 2)
         """
         raw = np.clip(raw, -1.0, 1.0)
         t   = (raw + 1.0) / 2.0   # shift to [0, 1]
-        return M_MIN + t * (M_MAX - M_MIN)
+        prices = M_MIN + t * (M_MAX - M_MIN)
+        return prices[:N_ZONES], prices[N_ZONES:]

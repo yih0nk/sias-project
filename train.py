@@ -132,9 +132,11 @@ def train(args):
               f"completed: {info['completed']}  "
               f"dropped: {info['dropped']}  "
               f"revenue: {[f'${r:.2f}' for r in info['revenue']]}")
-        print(f"  Last prices (mean): "
-              f"{COMPANY_NAMES[0]}={np.mean(info['prices'][0]):.3f}  "
-              f"{COMPANY_NAMES[1]}={np.mean(info['prices'][1]):.3f}")
+        print(f"  Last prices HV/AV (mean): "
+              f"{COMPANY_NAMES[0]}="
+              f"{np.mean(info['prices_hv'][0]):.3f}/{np.mean(info['prices_av'][0]):.3f}  "
+              f"{COMPANY_NAMES[1]}="
+              f"{np.mean(info['prices_hv'][1]):.3f}/{np.mean(info['prices_av'][1]):.3f}")
 
         # Save checkpoints
         if episode % args.save_every == 0:

@@ -23,7 +23,7 @@ N_AV_PER_COMPANY = 200
 EPOCH_SEC        = 900         # 15 min = 900 seconds per decision epoch
 SUMO_STEP_SEC    = 1           # SUMO advances 1 second per step
 STEPS_PER_EPOCH  = EPOCH_SEC // SUMO_STEP_SEC   # 900 steps/epoch
-PLANNING_HORIZON = 2976        # 31 days × 96 epochs/day (Table 1)
+PLANNING_HORIZON = 96          # 1 simulated day (96 × 15min epochs); scale to 2976 with real data
 
 # ── Vehicle state IDs ─────────────────────────────────────────────────────────
 STATE_IDLE       = 0
@@ -35,22 +35,23 @@ K_SHORTEST_PATHS = 3           # candidate routes for logit sampling
 MAX_WAIT_SEC     = 900         # request dropped after 15 min without service
 
 # ── Action space ──────────────────────────────────────────────────────────────
-# Each company controls:
-#   zone_price[z]  : one price multiplier per zone (applies to all vehicle types)
-M_MIN            = 0.5         # minimum price multiplier
-M_MAX            = 2.0         # maximum price multiplier
+# Each company controls separate HV and AV price multipliers per zone (Table 2):
+#   zone_price_hv[z] : HV price multiplier for zone z   in [M_MIN, M_MAX]
+#   zone_price_av[z] : AV price multiplier for zone z   in [M_MIN, M_MAX]
+M_MIN            = 0.1         # minimum price multiplier (Eq. 3)
+M_MAX            = 2.0         # maximum price multiplier (Eq. 3)
 
-# Action dimension per company: N_ZONES prices only
-ACTION_DIM       = N_ZONES     # 9
+# Action dimension: N_ZONES HV prices + N_ZONES AV prices (Table 2, no theta)
+ACTION_DIM       = 2 * N_ZONES   # 150
 
-# ── Observation space ─────────────────────────────────────────────────────────
-# time-of-day sin/cos                    : 2
-# total demand + zone inflow + outflow   : 1 + 2*N_ZONES = 19
-# own fleet state (idle/pickup/occ/total): 4
-# competitor last price (mean)           : 1
-# ─────────────────────────────────────────
-# Total = 8 + 2*N_ZONES = 26
-OBS_DIM          = 8 + 2 * N_ZONES    # 26
+# ── Observation space (Section 3.1, no congestion, no theta) ─────────────────
+# time-of-day sin/cos                       : 2
+# total demand + zone inflow + outflow       : 1 + 2*N_ZONES
+# own fleet state (idle/pickup/occ/total)    : 4
+# competitor last HV mean price + AV mean price : 2
+# ──────────────────────────────────────────
+# Total = 9 + 2*N_ZONES
+OBS_DIM          = 9 + 2 * N_ZONES   # 159
 
 # ── Reward (Eq. 1 — revenue-based) ───────────────────────────────────────────
 DROP_PENALTY     = 0.2         # per dropped request

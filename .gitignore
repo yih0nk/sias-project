@@ -15,5 +15,13 @@ data/
 *.parquet
 *.csv
 
+# SUMO network and OSM files — large, regenerate via netconvert
+*.net.xml
+*.osm
+*.osm.pbf
+
+# Benchmark output
+benchmark_results.png
+
 # macOS junk
 .DS_Store

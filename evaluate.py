@@ -4,11 +4,10 @@ evaluate.py
 Load trained agents and visualize the decision differences between
 CompanyA and CompanyB.
 
-Produces four plots:
-  1. Zone prices per company (heatmap over 9 zones × time)
-  2. Theta_av over time (routing greediness)
-  3. Cumulative reward comparison
-  4. Market share over time
+Produces three plots:
+  1. Zone prices per company (mean HV price multiplier over time)
+  2. Cumulative reward comparison
+  3. Market share over time
 
 Usage:
     python3 evaluate.py                              # run 1 eval episode
@@ -81,15 +80,14 @@ def run_episode(env, agents, deterministic=True):
     Returns
     -------
     history : dict with keys
-        'prices'   : list (n_epochs) of [prices_A, prices_B] (each N_ZONES)
-        'thetas'   : list (n_epochs) of [theta_A, theta_B]
+        'prices_hv': list (n_epochs) of [prices_A, prices_B] (each N_ZONES)
         'rewards'  : list (n_epochs) of [r_A, r_B]
         'completed': list (n_epochs) of [n_A, n_B]
         'dropped'  : list (n_epochs) of [n_A, n_B]
     """
     obs_list = env.reset()
     history  = {k: [] for k in
-                ["prices_hv", "prices_av", "rewards", "completed", "dropped"]}
+                ["prices_hv", "rewards", "completed", "dropped"]}
 
     for _ in range(PLANNING_HORIZON):
         actions = [agents[c].act(obs_list[c], deterministic=deterministic)[0]
@@ -98,7 +96,6 @@ def run_episode(env, agents, deterministic=True):
         obs_list, rewards, done, info = env.step(actions)
 
         history["prices_hv"].append(info["prices_hv"])
-        history["prices_av"].append(info["prices_av"])
         history["rewards"].append(rewards)
         history["completed"].append(info["completed"])
         history["dropped"].append(info["dropped"])
@@ -245,7 +242,6 @@ def main():
 
     avg_history = {
         "prices_hv": avg_field("prices_hv"),
-        "prices_av": avg_field("prices_av"),
         "rewards":   avg_field("rewards"),
         "completed": avg_field("completed"),
         "dropped":   avg_field("dropped"),
@@ -259,10 +255,9 @@ def main():
         print(f"  {COMPANY_NAMES[c]}: total reward = {total_rewards[c]:.3f}")
 
     mean_hv = [np.mean([h[c] for h in avg_history["prices_hv"]]) for c in range(N_COMPANIES)]
-    mean_av = [np.mean([h[c] for h in avg_history["prices_av"]]) for c in range(N_COMPANIES)]
-    print(f"\n  Mean price multiplier (HV / AV):")
+    print(f"\n  Mean HV price multiplier:")
     for c in range(N_COMPANIES):
-        print(f"    {COMPANY_NAMES[c]}: {mean_hv[c]:.3f} / {mean_av[c]:.3f}")
+        print(f"    {COMPANY_NAMES[c]}: {mean_hv[c]:.3f}")
 
     plot_decisions(avg_history, save_path=args.save_fig)
 

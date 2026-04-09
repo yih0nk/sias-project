@@ -1,0 +1,18 @@
+<configuration>
+    <input>
+        <net-file value="manhattan.net.xml"/>
+        <route-files value="grid.rou.xml"/>
+    </input>
+    <time>
+        <begin value="0"/>
+        <end value="999999"/>
+    </time>
+    <processing>
+        <time-to-teleport value="300"/>
+        <collision.action value="remove"/>
+    </processing>
+    <report>
+        <no-warnings value="true"/>
+        <no-step-log value="true"/>
+    </report>
+</configuration>

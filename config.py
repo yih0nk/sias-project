@@ -86,10 +86,7 @@ HIDDEN_DIM       = 128         # smaller net for smaller obs/action dims
 
 # ── SUMO ──────────────────────────────────────────────────────────────────────
 SUMO_BINARY      = "sumo"      # use "sumo-gui" for visual debugging
-SUMO_CFG         = "grid.sumocfg"    # simple grid network config
-
-# Manhattan config (for future full-scale experiments)
-MANHATTAN_SUMO_CFG = "sim.sumocfg"
+SUMO_CFG         = "sim.sumocfg"     # Manhattan network config
 
 # ── Misc ──────────────────────────────────────────────────────────────────────
 SEED             = 42

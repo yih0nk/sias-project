@@ -1,35 +1,53 @@
 """
 tools/zone_map.py
 =================
-Zone layout for the simulation.
+Maps zone indices (0..N_ZONES-1) to representative SUMO edge IDs.
 
-Mock mode (default): 75 zones with generated representative edge names.
-Real mode: replace ZONE_EDGES / ZONE_REP_EDGE with actual SUMO edge IDs
-           derived from the Manhattan OSM network and TLC zone shapefiles.
+Real mode: loads data/zones.csv produced by tools/build_zone_edge_map.py.
+Mock mode: falls back to synthetic edge names (zone{i}_e0) when zones.csv
+           is not present.
 
-Zone indices 0–74 correspond to MANHATTAN_ZONE_IDS in data_loader.py
-(the 75 TLC taxi zones used in the full-scale experiment).
+Zone index i corresponds to MANHATTAN_ZONE_IDS[i] in data_loader.py.
 """
 
+import os
 from config import N_ZONES
 
-# ── Mock zone layout ──────────────────────────────────────────────────────────
-# Each zone gets a synthetic edge name "zone{i}_e0" / "zone{i}_e1".
-# In real mode, replace with SUMO edge IDs from the Manhattan network.
+_ZONES_CSV = os.path.join(
+    os.path.dirname(__file__), "..", "data", "zones.csv"
+)
 
-ZONE_EDGES: dict = {
-    i: [f"zone{i}_e0", f"zone{i}_e1"]
-    for i in range(N_ZONES)
-}
 
-# Representative edge for each zone (used for vehicle spawning / demand)
-ZONE_REP_EDGE: dict = {i: f"zone{i}_e0" for i in range(N_ZONES)}
+def _load() -> tuple:
+    """Returns (ZONE_EDGES, ZONE_REP_EDGE, DEPOT_EDGE)."""
+    if os.path.exists(_ZONES_CSV):
+        # Real mode — use SUMO edges from the Manhattan network
+        import csv
+        from data_loader import MANHATTAN_ZONE_IDS
+        tlc_to_edge = {}
+        with open(_ZONES_CSV) as f:
+            for row in csv.DictReader(f):
+                tlc_to_edge[int(row["zone_id"])] = row["edge_id"]
 
-# All unique mock edges
+        zone_rep = {}
+        for idx, tlc_id in enumerate(MANHATTAN_ZONE_IDS):
+            if tlc_id in tlc_to_edge:
+                zone_rep[idx] = tlc_to_edge[tlc_id]
+
+        zone_edges = {z: [e] for z, e in zone_rep.items()}
+        depot = zone_rep.get(0, list(zone_rep.values())[0])
+        return zone_edges, zone_rep, depot
+    else:
+        # Mock mode — synthetic edge names
+        zone_edges = {i: [f"zone{i}_e0", f"zone{i}_e1"] for i in range(N_ZONES)}
+        zone_rep   = {i: f"zone{i}_e0" for i in range(N_ZONES)}
+        depot      = "zone0_e0"
+        return zone_edges, zone_rep, depot
+
+
+ZONE_EDGES, ZONE_REP_EDGE, DEPOT_EDGE = _load()
+
 ALL_ZONE_EDGES = sorted({e for edges in ZONE_EDGES.values() for e in edges})
-
-# Depot edge: where vehicles are reset after teleport
-DEPOT_EDGE = "zone0_e0"
 
 
 def zone_of_edge(edge_id: str) -> int:

@@ -10,7 +10,7 @@ the Manhattan SUMO network and TLC zone→edge mapping.
 """
 
 # ── Simulation structure ──────────────────────────────────────────────────────
-N_ZONES          = 75          # 75 TLC taxi zones in Manhattan (Table 1)
+N_ZONES          = 70          # 70 Manhattan TLC zones with valid SUMO edges (75 in paper; 5 non-Manhattan dropped)
 N_COMPANIES      = 2           # CompanyA (0), CompanyB (1)
 COMPANY_NAMES    = ["CompanyA", "CompanyB"]
 VEHICLE_TYPES    = ["hv", "av"]   # human-driven, autonomous

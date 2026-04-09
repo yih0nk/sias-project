@@ -102,17 +102,17 @@ def make_mock_demand(
 # Simulation start time (matches Section 1 of the paper)
 _SIM_START = datetime.datetime(2025, 7, 1, 0, 0, 0)
 
-# Manhattan TLC zone IDs (75 zones used in the full-scale version)
+# Manhattan TLC zone IDs — 70 zones with valid SUMO edges
+# Dropped 9, 10, 11, 14, 15: outside Manhattan bbox (Queens/Brooklyn/Staten Island)
 MANHATTAN_ZONE_IDS = [
-    4, 12, 13, 24, 41, 42, 43, 45, 48, 50,
+    4, 8, 12, 13, 24, 41, 42, 43, 45, 48, 50,
     68, 74, 75, 79, 87, 88, 90, 100, 103, 104,
     105, 107, 113, 114, 116, 120, 125, 127, 128, 137,
     140, 141, 142, 143, 144, 148, 151, 152, 153, 158,
     161, 162, 163, 164, 166, 170, 186, 194, 202, 209,
     211, 224, 229, 230, 231, 232, 233, 234, 236, 237,
-    238, 239, 243, 244, 246, 249, 261, 262, 263, 8,
-    9, 10, 11, 14, 15,
-][:75]
+    238, 239, 243, 244, 246, 249, 261, 262, 263,
+]
 
 _TLC_TO_IDX = {z: i for i, z in enumerate(MANHATTAN_ZONE_IDS)}
 

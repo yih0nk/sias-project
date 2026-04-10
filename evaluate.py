@@ -119,14 +119,15 @@ def plot_decisions(history, save_path="results.png"):
     rewards  = np.array(history["rewards"])                  # (T, 2)
     completed= np.array(history["completed"])                # (T, 2)
 
-    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     fig.suptitle("CompanyA vs CompanyB — Decision Differences", fontsize=14,
                  fontweight="bold")
+    ax1, ax2 = axes[0]
+    ax3, ax4 = axes[1]
 
     colors = ["#2196F3", "#F44336"]   # blue for A, red for B
 
     # ── Panel 1: Zone prices over time ────────────────────────────────────────
-    ax1 = axes[0]
     ax1.plot(epochs, prices_A.mean(axis=1), color=colors[0],
              label="CompanyA mean price", linewidth=2)
     ax1.plot(epochs, prices_B.mean(axis=1), color=colors[1],
@@ -146,7 +147,6 @@ def plot_decisions(history, save_path="results.png"):
     ax1.grid(True, alpha=0.3)
 
     # ── Panel 2: Cumulative reward ────────────────────────────────────────────
-    ax2 = axes[1]
     cum_A = np.cumsum(rewards[:, 0])
     cum_B = np.cumsum(rewards[:, 1])
     ax2.plot(epochs, cum_A, color=colors[0], label="CompanyA", linewidth=2)
@@ -158,7 +158,6 @@ def plot_decisions(history, save_path="results.png"):
     ax2.grid(True, alpha=0.3)
 
     # ── Panel 3: Market share (rolling window) ────────────────────────────────
-    ax3 = axes[2]
     total    = completed.sum(axis=1).clip(min=1)
     share_A  = completed[:, 0] / total
     share_B  = completed[:, 1] / total
@@ -176,6 +175,41 @@ def plot_decisions(history, save_path="results.png"):
     ax3.set_title("Market Share Over Time")
     ax3.legend(fontsize=8)
     ax3.grid(True, alpha=0.3)
+
+    # ── Panel 4: Successful RL training reference diagram ────────────────────
+    episodes  = np.linspace(0, 200, 300)
+
+    # Reward curve: rises fast then plateaus (log-shaped)
+    reward_curve = 1 - np.exp(-episodes / 40) + 0.08 * np.sin(episodes / 8)
+    reward_curve = reward_curve / reward_curve.max()
+
+    # Entropy curve: starts high (random) and decays as policy firms up
+    entropy_curve = np.exp(-episodes / 80) + 0.05 * np.random.default_rng(0).normal(size=len(episodes))
+    entropy_curve = np.clip(entropy_curve, 0, 1)
+
+    ax4.plot(episodes, reward_curve,  color="#4CAF50", linewidth=2.5,
+             label="Episode reward (↑ good)")
+    ax4.plot(episodes, entropy_curve, color="#FF9800", linewidth=2.5,
+             linestyle="--", label="Policy entropy (↓ good)")
+
+    # Phase annotations
+    for x, label, align in [
+        (20,  "Exploration\n(random prices)", "left"),
+        (80,  "Learning\n(patterns emerge)", "center"),
+        (160, "Convergence\n(stable strategy)", "right"),
+    ]:
+        ax4.axvline(x, color="gray", linewidth=0.8, linestyle=":")
+        ax4.text(x + (4 if align == "left" else -4 if align == "right" else 0),
+                 0.55, label, fontsize=7, color="gray", ha=align, va="center",
+                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.7))
+
+    ax4.set_xlim(0, 200)
+    ax4.set_ylim(-0.05, 1.15)
+    ax4.set_xlabel("Training Episode")
+    ax4.set_ylabel("Normalized Value")
+    ax4.set_title("What Successful RL Training Looks Like")
+    ax4.legend(fontsize=8, loc="center right")
+    ax4.grid(True, alpha=0.3)
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches="tight")

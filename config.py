@@ -5,8 +5,8 @@ Single source of truth for every hyperparameter in the simulation.
 All other modules import from here — never hard-code magic numbers.
 
 Parameters match Section 1 / Table 1 of the paper.
-N_ZONES=75 uses mock representative edges; real mode requires
-the Manhattan SUMO network and TLC zone→edge mapping.
+N_ZONES=70 (paper uses 75; 5 non-Manhattan zones dropped).
+Real mode requires the Manhattan SUMO network and TLC zone→edge mapping.
 """
 
 # ── Simulation structure ──────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ M_MIN            = 0.1         # minimum price multiplier (Eq. 3)
 M_MAX            = 2.0         # maximum price multiplier (Eq. 3)
 
 # Action dimension: N_ZONES HV prices + N_ZONES AV prices (Table 2, no theta)
-ACTION_DIM       = 2 * N_ZONES   # 150
+ACTION_DIM       = 2 * N_ZONES   # 140 (2 × 70 zones)
 
 # ── Observation space (Section 3.1, no congestion, no theta) ─────────────────
 # time-of-day sin/cos                       : 2
@@ -51,7 +51,7 @@ ACTION_DIM       = 2 * N_ZONES   # 150
 # competitor last HV mean price + AV mean price : 2
 # ──────────────────────────────────────────
 # Total = 9 + 2*N_ZONES
-OBS_DIM          = 9 + 2 * N_ZONES   # 159
+OBS_DIM          = 9 + 2 * N_ZONES   # 149 (9 + 2×70)
 
 # ── Reward (Eq. 1 — revenue-based) ───────────────────────────────────────────
 DROP_PENALTY     = 0.2         # per dropped request

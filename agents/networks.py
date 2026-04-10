@@ -5,8 +5,8 @@ Actor and Critic neural networks for IPPO (Section 3).
 
 Actor
 -----
-Input  : observation vector, shape (OBS_DIM,) = (162,)
-Output : mean and log_std for each action dimension (151,)
+Input  : observation vector, shape (OBS_DIM,) = (149,)
+Output : mean and log_std for each action dimension (140,)
          The output is NOT squashed here — PPO uses the Gaussian log-prob
          directly. The environment's _decode_action() applies tanh + rescaling.
 
@@ -58,8 +58,8 @@ class Actor(nn.Module):
 
     Parameters
     ----------
-    obs_dim    : int   Input dimension (default OBS_DIM = 162)
-    action_dim : int   Output dimension (default ACTION_DIM = 151)
+    obs_dim    : int   Input dimension (default OBS_DIM = 149)
+    action_dim : int   Output dimension (default ACTION_DIM = 140)
     hidden_dim : int   Hidden layer width
     """
 
